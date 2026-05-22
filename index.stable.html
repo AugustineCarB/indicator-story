@@ -1,0 +1,1537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>The TBL Liquidity Indicator — How It's Built</title>
+<meta name="description" content="A scroll-driven walkthrough of how The Bitcoin Layer's proprietary Liquidity Indicator is constructed." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" />
+
+<style>
+:root {
+  --bg: #0D1117;
+  --bg-card: #161B22;
+  --ink: #E6E1D7;
+  --ink-dim: #7A8290;
+  --accent: #F5C518;
+  --buy: #3FB950;
+  --sell: #F85149;
+  --sketch: rgba(230,225,215,0.85);
+  --hairline: rgba(230,225,215,0.12);
+
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+body {
+  font-family: var(--font-body);
+  font-size: 19px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(245,197,24,0.3); }
+a:hover { border-bottom-color: var(--accent); }
+
+/* ───────────────────────── Intro: scroll-hijacked dive-into-chart ───────────────────────── */
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.intro.is-done {
+  position: relative;
+  inset: auto;
+  z-index: 1;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+}
+.intro__media {
+  position: relative;
+  width: 38vw;
+  height: 30vh;
+  min-width: 280px;
+  min-height: 200px;
+  max-width: 100vw;
+  max-height: 100vh;
+  transition: none;
+  display: grid;
+  place-items: center;
+  will-change: width, height;
+}
+.intro__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.intro__title {
+  position: absolute;
+  inset: 0;
+  z-index: 105;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 0 6vw;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+.intro__title-inner {
+  max-width: 1100px;
+}
+.intro__logo {
+  display: block;
+  margin: 0 auto 28px;
+  width: clamp(140px, 15vw, 210px);
+  height: auto;
+  opacity: 0.95;
+}
+.intro__kicker {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 28px;
+}
+.intro__h1 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(48px, 8vw, 120px);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  margin: 0 0 24px 0;
+  color: var(--ink);
+  mix-blend-mode: difference;
+}
+.intro__sub {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: clamp(16px, 1.4vw, 20px);
+  color: var(--ink-dim);
+  max-width: 56ch;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+.intro__cue {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--ink-dim);
+  z-index: 110;
+  opacity: 0;
+  animation: cueFade 1s ease-out 3s forwards, cueBob 2.4s ease-in-out 4s infinite;
+  pointer-events: none;
+}
+.intro__cue.is-hidden { opacity: 0 !important; animation: none; }
+@keyframes cueFade { to { opacity: 1; } }
+@keyframes cueBob {
+  0%,100% { transform: translateX(-50%) translateY(0); }
+  50%     { transform: translateX(-50%) translateY(6px); }
+}
+body.intro-locked { overflow: hidden; }
+
+/* ───────────────────────── Label scene: four beats on one canvas ───────────────────────── */
+.label-scene {
+  position: relative;
+  height: 420vh;          /* sticky pins for ~320vh worth of scroll → four beats */
+  background: var(--bg);
+}
+.label-scene__sticky {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+.label-scene__sticky svg {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+}
+.label-scene__titles {
+  position: absolute;
+  top: 8vh;
+  left: 6vw;
+  z-index: 2;
+  max-width: 70vw;
+}
+.label-scene__title {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 800;
+  font-size: clamp(28px, 4vw, 52px);
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  color: var(--ink);
+  width: max-content;
+  max-width: min(820px, 55vw);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.65s ease-out, transform 0.65s ease-out;
+  pointer-events: none;
+}
+.label-scene__title.is-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.label-scene__trigger {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  pointer-events: none;
+}
+.label-scene__trigger[data-beat="2"] { top: 100vh; }
+.label-scene__trigger[data-beat="3"] { top: 210vh; }
+.label-scene__trigger[data-beat="4"] { top: 320vh; }
+.label-zoom-box {
+  opacity: 0;
+  transition: opacity 0.55s ease-out;
+}
+.label-zoom-box.is-on { opacity: 1; }
+.label-annotation {
+  opacity: 0;
+  transition: opacity 0.55s ease-out;
+}
+.label-annotation.is-on { opacity: 1; }
+@media (max-width: 820px) {
+  .label-scene { height: 340vh; }
+  .label-scene__sticky { height: 100vh; }
+  .label-scene__title { font-size: 26px; max-width: 85vw; }
+  .label-scene__titles { top: 4vh; left: 5vw; max-width: 80vw; }
+  .label-scene__trigger[data-beat="2"] { top: 80vh; }
+  .label-scene__trigger[data-beat="3"] { top: 170vh; }
+  .label-scene__trigger[data-beat="4"] { top: 260vh; }
+}
+
+/* ───────────────────────── Roll-forward: typographic moment ───────────────────────── */
+.roll-forward {
+  position: relative;
+  height: 160vh;
+  background: var(--bg);
+}
+.roll-forward__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0 6vw;
+}
+.roll-forward__text {
+  margin: 0;
+  text-align: center;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 800;
+  font-size: clamp(32px, 4.6vw, 68px);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  max-width: 18ch;
+  opacity: 0;
+  transform: translateY(40vh);
+  transition: opacity 1s ease-out, transform 1.2s cubic-bezier(.22,.61,.36,1);
+}
+.roll-forward__text.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.roll-forward__text-em { color: var(--accent); }
+@media (max-width: 820px) {
+  .roll-forward { height: 130vh; }
+  .roll-forward__text { font-size: clamp(28px, 6vw, 40px); }
+}
+
+/* ───────────────────────── Delta chart: four beats — rolling → smoothed → SPX overlay → peaks/troughs ───────────────────────── */
+.delta-chart {
+  position: relative;
+  height: 570vh;          /* sticky pins for ~470vh of scroll → five beats */
+  background: var(--bg);
+}
+.delta-chart__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+.delta-chart__sticky svg {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+}
+.delta-chart__titles {
+  position: absolute;
+  top: 8vh;
+  left: 6vw;
+  z-index: 2;
+  max-width: 70vw;
+}
+.delta-chart__title {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 800;
+  font-size: clamp(28px, 4vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  width: max-content;
+  max-width: min(820px, 55vw);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.65s ease-out, transform 0.65s ease-out;
+  pointer-events: none;
+}
+.delta-chart__title.is-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.delta-chart__trigger {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  pointer-events: none;
+}
+.delta-chart__trigger[data-beat="2"] { top: 100vh; }
+.delta-chart__trigger[data-beat="3"] { top: 210vh; }
+.delta-chart__trigger[data-beat="4"] { top: 330vh; }
+.delta-chart__trigger[data-beat="5"] { top: 450vh; }
+
+.delta-noisy { transition: opacity 0.7s ease-out; }
+.delta-noisy.is-dimmed { opacity: 0.22; }
+.delta-noisy.is-hidden { opacity: 0; }
+.delta-smoothed {
+  opacity: 0;
+  transition: opacity 0.6s ease-out;
+}
+.delta-smoothed.is-on { opacity: 1; }
+.delta-spx {
+  opacity: 0;
+  transition: opacity 0.6s ease-out;
+}
+.delta-spx.is-on { opacity: 1; }
+
+.delta-chart__legend {
+  position: absolute;
+  bottom: 8vh;
+  right: 6vw;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: 'Inter', sans-serif;
+  font-size: clamp(13px, 1vw, 16px);
+  font-weight: 600;
+  color: var(--ink);
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.6s ease-out;
+  pointer-events: none;
+}
+.delta-chart__legend.is-on { opacity: 1; }
+.delta-chart__legend-row { display: flex; align-items: center; gap: 10px; }
+.delta-chart__swatch { width: 16px; height: 16px; border-radius: 2px; display: inline-block; }
+.delta-chart__swatch--yellow { background: #F5C518; }
+.delta-chart__swatch--green  { background: #4ADE80; }
+
+.delta-extremes {
+  opacity: 0;
+  transition: opacity 0.7s ease-out;
+}
+.delta-extremes.is-on { opacity: 1; }
+.delta-extremes .extreme-label--primary,
+.delta-extremes .extreme-label--secondary {
+  transition: opacity 0.55s ease-out;
+}
+.delta-extremes .extreme-label--secondary { opacity: 0; }
+.delta-extremes.is-flat .extreme-label--primary { opacity: 0; }
+.delta-extremes.is-flat .extreme-label--secondary { opacity: 1; }
+
+.delta-wind {
+  opacity: 0;
+  transition: opacity 1.2s ease-out;
+}
+.delta-wind.is-on { opacity: 1; }
+.delta-wind path { animation: deltaWindFlow 14s linear infinite; }
+.delta-wind path:nth-child(2n)  { animation-duration: 11s; animation-direction: reverse; }
+.delta-wind path:nth-child(3n)  { animation-duration: 17s; }
+@keyframes deltaWindFlow {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -260; }
+}
+
+@media (max-width: 820px) {
+  .delta-chart { height: 470vh; }
+  .delta-chart__title { font-size: 24px; max-width: 85vw; }
+  .delta-chart__titles { top: 4vh; left: 5vw; max-width: 85vw; }
+  .delta-chart__trigger[data-beat="2"] { top: 80vh; }
+  .delta-chart__trigger[data-beat="3"] { top: 170vh; }
+  .delta-chart__trigger[data-beat="4"] { top: 270vh; }
+  .delta-chart__trigger[data-beat="5"] { top: 370vh; }
+  .delta-chart__legend { bottom: 4vh; right: 4vw; font-size: 12px; }
+}
+
+/* ───────────────────────── Slope chart: two beats — identify zeros, then color them ───────────────────────── */
+.slope-chart {
+  position: relative;
+  height: 320vh;          /* sticky pins for ~220vh of scroll → two beats */
+  background: var(--bg);
+}
+.slope-chart__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+.slope-chart__sticky svg {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+}
+.slope-chart__titles {
+  position: absolute;
+  top: 8vh;
+  left: 6vw;
+  z-index: 2;
+}
+.slope-chart__title {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 800;
+  font-size: clamp(28px, 4vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  width: max-content;
+  max-width: min(820px, 55vw);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.65s ease-out, transform 0.65s ease-out;
+  pointer-events: none;
+}
+.slope-chart__title.is-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.slope-chart__trigger {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  pointer-events: none;
+}
+.slope-chart__trigger[data-beat="2"] { top: 120vh; }
+
+.slope-dot { transition: fill 0.6s ease-out, stroke 0.6s ease-out; }
+.slope-dots.is-colored .slope-dot--peak {
+  fill: #F85149;
+  stroke: rgba(248,81,73,0.45);
+}
+.slope-dots.is-colored .slope-dot--trough {
+  fill: #3FB950;
+  stroke: rgba(63,185,80,0.45);
+}
+.slope-label { opacity: 0; transition: opacity 0.55s ease-out; pointer-events: none; }
+.slope-dots.is-colored .slope-label { opacity: 1; }
+.slope-chart__legend {
+  position: absolute;
+  bottom: 8vh;
+  right: 6vw;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: 'Inter', sans-serif;
+  font-size: clamp(13px, 1vw, 16px);
+  font-weight: 600;
+  color: var(--ink);
+  z-index: 3;
+  pointer-events: none;
+}
+.slope-chart__legend-row { display: flex; align-items: center; gap: 10px; }
+.slope-chart__swatch { width: 16px; height: 16px; border-radius: 2px; display: inline-block; background: #A78BFA; }
+@media (max-width: 820px) {
+  .slope-chart { height: 260vh; }
+  .slope-chart__title { font-size: 24px; max-width: 85vw; }
+  .slope-chart__titles { top: 4vh; left: 5vw; }
+  .slope-chart__trigger[data-beat="2"] { top: 100vh; }
+  .slope-chart__legend { bottom: 4vh; right: 4vw; font-size: 12px; }
+}
+
+/* ───────────────────────── TBL Pulse CTA ───────────────────────── */
+.pulse-cta {
+  position: relative;
+  height: 160vh;
+  background: var(--bg);
+}
+.pulse-cta__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 0 4vw;
+  overflow: hidden;
+}
+.pulse-cta__lead {
+  margin: 0 0 2vh 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 500;
+  font-size: clamp(20px, 2.2vw, 32px);
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  color: var(--ink-dim);
+  max-width: 30ch;
+  opacity: 0;
+  transform: translateY(30vh);
+  transition: opacity 1s ease-out, transform 1.2s cubic-bezier(.22,.61,.36,1);
+}
+.pulse-cta__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: clamp(40px, 6vw, 88px);   /* drives arrow size */
+  line-height: 1;
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: none;
+  opacity: 0;
+  transform: translateY(30vh);
+  transition: opacity 1.1s ease-out 0.15s,
+              transform 1.3s cubic-bezier(.22,.61,.36,1) 0.15s,
+              color 0.2s ease;
+}
+.pulse-cta__brand:hover { border-bottom: none; }
+.pulse-cta__logo {
+  display: block;
+  width: clamp(280px, 50vw, 820px);
+  height: auto;
+  transition: opacity 0.2s ease;
+}
+.pulse-cta__brand:hover .pulse-cta__logo { opacity: 0.85; }
+.pulse-cta__arrow {
+  font-weight: 700;
+  display: inline-block;
+  transition: transform 0.25s ease;
+}
+.pulse-cta__brand:hover .pulse-cta__arrow { transform: translateX(0.15em); }
+.pulse-cta.is-visible .pulse-cta__lead,
+.pulse-cta.is-visible .pulse-cta__brand {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (max-width: 820px) {
+  .pulse-cta { height: 110vh; }
+  .pulse-cta__lead { font-size: 18px; }
+  .pulse-cta__brand { font-size: clamp(60px, 18vw, 120px); }
+}
+
+/* ───────────────────────── Closing note ───────────────────────── */
+.closing-note {
+  position: relative;
+  height: 140vh;
+  background: var(--bg);
+}
+.closing-note__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 0 6vw;
+  overflow: hidden;
+}
+.closing-note__text {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  font-size: clamp(22px, 2.6vw, 38px);
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  color: var(--ink-dim);
+  max-width: 30ch;
+  opacity: 0;
+  transform: translateY(40vh);
+  transition: opacity 1s ease-out, transform 1.2s cubic-bezier(.22,.61,.36,1);
+}
+.closing-note.is-visible .closing-note__text {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (max-width: 820px) {
+  .closing-note { height: 110vh; }
+  .closing-note__text { font-size: 19px; max-width: 28ch; }
+}
+
+/* ───────────────────────── Global mobile body sizing ───────────────────────── */
+@media (max-width: 820px) {
+  body { font-size: 17px; }
+  .intro__h1 { font-size: 56px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ───────────────────────── INTRO (scene 0) — scroll-hijacked chart dive-in ───────────────────────── -->
+<section class="intro" id="intro">
+  <div class="intro__media" id="introMedia">
+    <svg class="intro__svg" id="introSvg" viewBox="0 0 1600 600" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+  </div>
+  <div class="intro__title" id="introTitle">
+    <img class="intro__logo" src="assets/tbl_logo_white.png" alt="The Bitcoin Layer" />
+    <h1 class="intro__h1">How we built our<br/>TBL Liquidity Indicator</h1>
+    <p class="intro__sub">A short walk through how the indicator was constructed, from the raw index to the buy and sell signals.</p>
+  </div>
+  <div class="intro__cue" id="introCue">SCROLL TO DIVE IN</div>
+</section>
+
+<!-- ───────────────────────── LABEL SCENE — three beats on one canvas ───────────────────────── -->
+<section class="label-scene" id="labelScene" aria-label="TBL Liquidity Index">
+  <div class="label-scene__sticky">
+    <svg id="labelSvg" viewBox="0 0 1600 600" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+    <div class="label-scene__titles">
+      <h2 class="label-scene__title is-active" data-beat="1">TBL Liquidity Index</h2>
+      <h2 class="label-scene__title" data-beat="2">Zoom into a 30-day period</h2>
+      <h2 class="label-scene__title" data-beat="3">Calculate the change within that 30-day period.</h2>
+    </div>
+  </div>
+  <div class="label-scene__trigger" data-beat="2" aria-hidden="true"></div>
+  <div class="label-scene__trigger" data-beat="3" aria-hidden="true"></div>
+  <div class="label-scene__trigger" data-beat="4" aria-hidden="true"></div>
+</section>
+
+<!-- ───────────────────────── ROLL FORWARD — typographic moment ───────────────────────── -->
+<section class="roll-forward" id="rollForward">
+  <div class="roll-forward__sticky">
+    <h2 class="roll-forward__text">
+      Roll that 30-day change throughout the life of our index, and you get a cycle.
+    </h2>
+  </div>
+</section>
+
+<!-- ───────────────────────── DELTA CHART — four beats: rolling → smoothed → SPX overlay → peaks/troughs ───────────────────────── -->
+<section class="delta-chart" id="deltaChart">
+  <div class="delta-chart__sticky">
+    <svg id="deltaChartSvg" viewBox="0 0 1600 600" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+    <div class="delta-chart__titles">
+      <h2 class="delta-chart__title is-active" data-beat="1">Rolling 30-day change of our index</h2>
+      <h2 class="delta-chart__title" data-beat="2">The raw 30-day change is noisy, so we smoothed it out.</h2>
+      <h2 class="delta-chart__title" data-beat="3">This smoothed cycle moves closely with 30-day changes in risk assets like the S&amp;P 500.</h2>
+      <h2 class="delta-chart__title" data-beat="4">Thus, finding peaks and troughs in this cycle identifies liquidity headwinds or tailwinds.</h2>
+      <h2 class="delta-chart__title" data-beat="5">These peaks and troughs are found where the slope of the cycle is flat.</h2>
+    </div>
+    <div class="delta-chart__legend" id="deltaLegend" aria-hidden="true">
+      <div class="delta-chart__legend-row"><span class="delta-chart__swatch delta-chart__swatch--yellow"></span><span>TBL Liquidity Cycle</span></div>
+      <div class="delta-chart__legend-row"><span class="delta-chart__swatch delta-chart__swatch--green"></span><span>S&amp;P 500 30-day change</span></div>
+    </div>
+  </div>
+  <div class="delta-chart__trigger" data-beat="2" aria-hidden="true"></div>
+  <div class="delta-chart__trigger" data-beat="3" aria-hidden="true"></div>
+  <div class="delta-chart__trigger" data-beat="4" aria-hidden="true"></div>
+  <div class="delta-chart__trigger" data-beat="5" aria-hidden="true"></div>
+</section>
+
+<!-- ───────────────────────── SLOPE CHART — two beats: identify zero crossings, then color them ───────────────────────── -->
+<section class="slope-chart" id="slopeChart">
+  <div class="slope-chart__sticky">
+    <svg id="slopeChartSvg" viewBox="0 0 1600 600" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+    <div class="slope-chart__titles">
+      <h2 class="slope-chart__title is-active" data-beat="1">We thus chart the slope of the cycle to find the spots where the slope is zero.</h2>
+      <h2 class="slope-chart__title" data-beat="2">When the slope crosses below zero, the cycle has turned negative, and when the slope crosses above zero, the cycle has turned positive.</h2>
+    </div>
+    <div class="slope-chart__legend">
+      <div class="slope-chart__legend-row"><span class="slope-chart__swatch"></span><span>Slope of Cycle</span></div>
+    </div>
+  </div>
+  <div class="slope-chart__trigger" data-beat="2" aria-hidden="true"></div>
+</section>
+
+<!-- ───────────────────────── TBL PULSE CTA — "and that's how we built…" ───────────────────────── -->
+<section class="pulse-cta" id="pulseCta">
+  <div class="pulse-cta__sticky">
+    <p class="pulse-cta__lead">And that's how we built our TBL&nbsp;Liquidity Indicator, available on</p>
+    <a class="pulse-cta__brand" href="https://research.thebitcoinlayer.com/" target="_blank" rel="noopener" aria-label="TBL Pulse">
+      <img class="pulse-cta__logo" src="assets/TBL_Pulse_Logo.png" alt="TBL Pulse" />
+      <span class="pulse-cta__arrow" aria-hidden="true">→</span>
+    </a>
+  </div>
+</section>
+
+<!-- ───────────────────────── CLOSING NOTE — caveat / context ───────────────────────── -->
+<section class="closing-note" id="closingNote">
+  <div class="closing-note__sticky">
+    <p class="closing-note__text">
+      This model simply lets us see what liquidity is doing, and whether it is helping or harming risk assets. It is a tool that must be used alongside other indicators for informed decisions.
+    </p>
+  </div>
+</section>
+
+<!-- ───────────────────────── Libraries ───────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/scrollama@3.2.0/build/scrollama.min.js"></script>
+<script src="https://unpkg.com/flubber@0.4.2/build/flubber.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════════
+   TBL Liquidity Indicator — Scrollytelling
+   Single-file implementation. Synthetic data only.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* ── Deterministic PRNG ─────────────────────────────────────────────────── */
+function mulberry32(seed) {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rng = mulberry32(20260521);
+
+/* ── Synthetic dataset shaped like the storyboard ───────────────────────── */
+// 600 daily points. Index oscillates around 50 with multi-frequency waves.
+const N = 600;
+const data = (() => {
+  const t = d3.range(N);
+  const index = t.map(i => {
+    const slow = 14 * Math.sin(i * 2 * Math.PI / 320);     // long cycle
+    const mid  =  9 * Math.sin(i * 2 * Math.PI / 110 + 1.1); // mid cycle
+    const fast =  4 * Math.sin(i * 2 * Math.PI / 38 + 0.4);  // fast wobble
+    const drift = 0.012 * (i - N / 2);
+    return 50 + slow + mid + fast + drift + (rng() - 0.5) * 1.6;
+  });
+
+  // 30-day change of the index
+  const W = 30;
+  const delta30 = index.map((v, i) => i < W ? null : v - index[i - W]);
+
+  // smoothed: simple double-EMA (looks like an HP filter at this scale)
+  const ema = (arr, alpha) => {
+    let s = arr[0];
+    return arr.map(v => v == null ? null : (s = s == null ? v : s + alpha * (v - s)));
+  };
+  const s1 = ema(delta30, 0.07);
+  const smoothed = ema(s1, 0.07);
+
+  // SPX 30d change: shifted + scaled version of smoothed plus noise
+  const spxDelta = smoothed.map((v, i) =>
+    v == null ? null : v * 0.85 + 2.5 * Math.sin(i / 90) + (rng() - 0.5) * 1.4
+  );
+
+  // slope = derivative of smoothed
+  const slope = smoothed.map((v, i) =>
+    (v == null || smoothed[i - 1] == null) ? null : (v - smoothed[i - 1]) * 8
+  );
+
+  // Zoom window: a small ascending segment near the middle of the chart.
+  // i=310→330 captures a clear upward move (v rises ~47 → ~61).
+  const zoomStart = 310, zoomEnd = 330;
+  const zoomSlice = index.slice(zoomStart, zoomEnd + 1);
+  const zoomYMin = Math.min(...zoomSlice);
+  const zoomYMax = Math.max(...zoomSlice);
+
+  return { t, index, delta30, smoothed, spxDelta, slope, zoomStart, zoomEnd, zoomYMin, zoomYMax };
+})();
+
+/* ── Intro: smooth white line + scroll-hijacked dive-into-chart expand ──── */
+(function intro() {
+  const svg = document.getElementById('introSvg');
+  const introEl = document.getElementById('intro');
+  const introMedia = document.getElementById('introMedia');
+  const introCue = document.getElementById('introCue');
+
+  const W = 1600, H = 600;
+  const cy = H * 0.5;
+
+  // Smooth catmull-rom line from the index data
+  const pts = data.index.map((v, i) => [
+    (i / (data.index.length - 1)) * (W - 80) + 40,
+    cy - (v - 50) * 6.5
+  ]);
+  const linePath = d3.line().curve(d3.curveCatmullRom.alpha(0.6))(pts);
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', linePath);
+  path.setAttribute('stroke', '#E6E1D7');
+  path.setAttribute('stroke-width', '2.2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('fill', 'none');
+  svg.appendChild(path);
+
+  // Initial stroke-dasharray reveal — line draws itself once on load
+  const len = path.getTotalLength();
+  path.style.strokeDasharray = len;
+  path.style.strokeDashoffset = len;
+  path.style.transition = 'stroke-dashoffset 2.6s cubic-bezier(.22,.61,.36,1)';
+  requestAnimationFrame(() => { path.style.strokeDashoffset = 0; });
+  setTimeout(() => {
+    // Clear the dasharray so later resizes don't show a gap
+    path.style.transition = 'none';
+    path.style.strokeDasharray = 'none';
+    path.style.strokeDashoffset = '0';
+  }, 2700);
+
+  // ── Scroll hijack: dive into the chart ───────────────────────────────
+  let progress = 0;
+  let expanded = false;
+  let touchStartY = 0;
+
+  // Lock scroll until expanded
+  document.body.classList.add('intro-locked');
+  window.scrollTo(0, 0);
+
+  const introTitle = document.getElementById('introTitle');
+
+  const setSize = () => {
+    // Start: 38vw × 30vh. End: 100vw × 100vh.
+    const isMobile = window.innerWidth < 768;
+    const wStart = isMobile ? 80 : 38;
+    const hStart = isMobile ? 26 : 30;
+    const w = wStart + progress * (100 - wStart);
+    const h = hStart + progress * (100 - hStart);
+    introMedia.style.width  = w + 'vw';
+    introMedia.style.height = h + 'vh';
+
+    // Title fades + recedes as we dive in. Fully gone by progress ≈ 0.55,
+    // so the chart owns the screen for the last half of the dive.
+    const titleOpacity = Math.max(0, 1 - progress / 0.55);
+    const titleScale = 1 - progress * 0.06;
+    const titleTranslate = -progress * 30; // px upward
+    introTitle.style.opacity = titleOpacity;
+    introTitle.style.transform = `translateY(${titleTranslate}px) scale(${titleScale})`;
+  };
+  setSize();
+
+  const finishIntro = () => {
+    if (expanded) return;
+    expanded = true;
+    introCue.classList.add('is-hidden');
+    document.body.classList.remove('intro-locked');
+    introEl.classList.add('is-done');
+    // Notify scrollama / page that scroll is now live
+    window.dispatchEvent(new Event('intro:done'));
+  };
+
+  const reEngageIntro = () => {
+    if (!expanded) return;
+    expanded = false;
+    document.body.classList.add('intro-locked');
+    introEl.classList.remove('is-done');
+    window.scrollTo(0, 0);
+    setSize(); // restores box opacity from progress
+  };
+
+  const onWheel = (e) => {
+    if (expanded) {
+      // Re-engage if user scrolls up while at the very top of the page
+      if (e.deltaY < 0 && window.scrollY <= 4) {
+        e.preventDefault();
+        reEngageIntro();
+      }
+      return;
+    }
+    e.preventDefault();
+    const delta = e.deltaY * 0.0011;
+    progress = Math.min(Math.max(progress + delta, 0), 1);
+    setSize();
+    if (progress >= 1) finishIntro();
+    if (progress > 0.05) introCue.classList.add('is-hidden');
+  };
+
+  const onTouchStart = (e) => {
+    touchStartY = e.touches[0].clientY;
+  };
+  const onTouchMove = (e) => {
+    if (!touchStartY) return;
+    const y = e.touches[0].clientY;
+    const dy = touchStartY - y; // positive = swipe up (scroll down)
+
+    if (expanded) {
+      // Re-engage if user swipes down while at the very top of the page
+      if (dy < -20 && window.scrollY <= 4) {
+        e.preventDefault();
+        reEngageIntro();
+        touchStartY = y;
+      }
+      return;
+    }
+    e.preventDefault();
+    const delta = dy * 0.006;
+    progress = Math.min(Math.max(progress + delta, 0), 1);
+    setSize();
+    if (progress >= 1) finishIntro();
+    if (progress > 0.05) introCue.classList.add('is-hidden');
+    touchStartY = y;
+  };
+  const onTouchEnd = () => { touchStartY = 0; };
+
+  // Keyboard: down/up arrows, page-down, space all work
+  const onKey = (e) => {
+    if (expanded) {
+      if (['ArrowUp','PageUp'].includes(e.key) && window.scrollY <= 4) {
+        e.preventDefault();
+        reEngageIntro();
+      }
+      return;
+    }
+    if (['ArrowDown','PageDown','Space',' '].includes(e.key)) {
+      e.preventDefault();
+      progress = Math.min(progress + 0.12, 1);
+      setSize();
+      if (progress >= 1) finishIntro();
+      introCue.classList.add('is-hidden');
+    }
+    if (['ArrowUp','PageUp'].includes(e.key)) {
+      e.preventDefault();
+      progress = Math.max(progress - 0.12, 0);
+      setSize();
+    }
+  };
+
+  window.addEventListener('wheel', onWheel, { passive: false });
+  window.addEventListener('touchstart', onTouchStart, { passive: false });
+  window.addEventListener('touchmove', onTouchMove, { passive: false });
+  window.addEventListener('touchend', onTouchEnd);
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('resize', setSize);
+
+  // Safety: if user is on a browser where wheel events are reluctant
+  // (e.g. some trackpad inertia), let a click also advance.
+  introEl.addEventListener('click', () => {
+    if (expanded) return;
+    progress = Math.min(progress + 0.25, 1);
+    setSize();
+    if (progress >= 1) finishIntro();
+  });
+})();
+
+/* ── Label scene: two beats on one canvas ────────────────────────────────── */
+(function labelScene() {
+  const svg = document.getElementById('labelSvg');
+  if (!svg) return;
+  const W = 1600, H = 600;
+  const cy = H * 0.5;
+  const ns = 'http://www.w3.org/2000/svg';
+
+  // Solid red baseline, positioned below the line's mean
+  const xLine = document.createElementNS(ns, 'line');
+  xLine.setAttribute('x1', 0);
+  xLine.setAttribute('x2', W);
+  xLine.setAttribute('y1', 380);
+  xLine.setAttribute('y2', 380);
+  xLine.setAttribute('stroke', '#F85149');
+  xLine.setAttribute('stroke-width', '2');
+  xLine.setAttribute('opacity', '0.9');
+  svg.appendChild(xLine);
+
+  // White line
+  const pts = data.index.map((v, i) => [
+    (i / (data.index.length - 1)) * (W - 80) + 40,
+    cy - (v - 50) * 6.5
+  ]);
+  const linePath = d3.line().curve(d3.curveCatmullRom.alpha(0.6))(pts);
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', linePath);
+  path.setAttribute('stroke', '#E6E1D7');
+  path.setAttribute('stroke-width', '2.2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('fill', 'none');
+  svg.appendChild(path);
+
+  // Red zoom box — hidden initially, revealed on beat 2
+  const rcLabel = rough.svg(svg, { options: { roughness: 1.8, bowing: 1.8, seed: 12 } });
+  const xa = (data.zoomStart / (data.index.length - 1)) * (W - 80) + 40;
+  const xb = (data.zoomEnd   / (data.index.length - 1)) * (W - 80) + 40;
+  const PAD = 3.2;
+  const yTop = cy - (data.zoomYMax + PAD - 50) * 6.5;
+  const yBot = cy - (data.zoomYMin - PAD - 50) * 6.5;
+
+  const boxG = document.createElementNS(ns, 'g');
+  boxG.setAttribute('class', 'label-zoom-box');
+  boxG.setAttribute('id', 'labelZoomBox');
+
+  const fillRect = document.createElementNS(ns, 'rect');
+  fillRect.setAttribute('x', xa);
+  fillRect.setAttribute('y', yTop);
+  fillRect.setAttribute('width', xb - xa);
+  fillRect.setAttribute('height', yBot - yTop);
+  fillRect.setAttribute('fill', '#F85149');
+  fillRect.setAttribute('fill-opacity', '0.15');
+  boxG.appendChild(fillRect);
+
+  const boxNode = rcLabel.rectangle(xa, yTop, xb - xa, yBot - yTop, {
+    stroke: '#F85149', strokeWidth: 1.8, roughness: 1.9, bowing: 2.0, seed: 12, fill: 'none'
+  });
+  boxG.appendChild(boxNode);
+  svg.appendChild(boxG);
+
+  // ── Beat 4 annotation: "30-day change" bracket + label next to the box ───
+  const yStart = cy - (data.index[data.zoomStart] - 50) * 6.5;
+  const yEnd   = cy - (data.index[data.zoomEnd]   - 50) * 6.5;
+  const yHi = Math.min(yStart, yEnd);
+  const yLo = Math.max(yStart, yEnd);
+  const annotationG = document.createElementNS(ns, 'g');
+  annotationG.setAttribute('class', 'label-annotation');
+
+  const bracketX = xb + 6;
+  const bracketCap = 5;
+  const bracket = document.createElementNS(ns, 'path');
+  bracket.setAttribute('d',
+    `M${bracketX - bracketCap},${yHi} L${bracketX},${yHi} L${bracketX},${yLo} L${bracketX - bracketCap},${yLo}`);
+  bracket.setAttribute('stroke', '#F5C518');
+  bracket.setAttribute('stroke-width', '1.5');
+  bracket.setAttribute('fill', 'none');
+  bracket.setAttribute('stroke-linecap', 'round');
+  annotationG.appendChild(bracket);
+
+  const annText = document.createElementNS(ns, 'text');
+  annText.setAttribute('x', bracketX + 8);
+  annText.setAttribute('y', (yHi + yLo) / 2);
+  annText.setAttribute('fill', '#F5C518');
+  annText.setAttribute('font-family', "'Inter', sans-serif");
+  annText.setAttribute('font-weight', '700');
+  annText.setAttribute('font-size', '8');
+  annText.setAttribute('dominant-baseline', 'middle');
+  annText.textContent = '30-day change';
+  annotationG.appendChild(annText);
+  svg.appendChild(annotationG);
+
+  // Non-scaling strokes so they don't get thick when the viewBox zooms in
+  [path, xLine, boxNode, fillRect, bracket].forEach(el => {
+    if (el && el.setAttribute) el.setAttribute('vector-effect', 'non-scaling-stroke');
+  });
+  // rough.js renders the rectangle as nested <path>s — give them non-scaling-stroke too
+  boxNode.querySelectorAll && boxNode.querySelectorAll('path').forEach(p => {
+    p.setAttribute('vector-effect', 'non-scaling-stroke');
+  });
+
+  // ── Beat dispatch via scroll-position threshold ──────────────────────────
+  const titles = document.querySelectorAll('.label-scene__title');
+  const triggers = document.querySelectorAll('.label-scene__trigger');
+
+  const fullViewBox = [0, 0, 1600, 600];
+  // Tight zoom centered on the red box. Includes the horizontal red line at the bottom.
+  // Aspect 8:3 to match the original (no letterboxing).
+  const bxCenter = (xa + xb) / 2;
+  const byCenter = (yTop + yBot) / 2;
+  const zoomHeight = (yBot - yTop) + 100; // breathing room + room for red line below
+  const zoomWidth = zoomHeight * (1600 / 600);
+  const zoomViewBox = [
+    bxCenter - zoomWidth / 2,
+    byCenter - zoomHeight / 2 + 10, // shift down slightly to include red line at y=380
+    zoomWidth,
+    zoomHeight
+  ];
+
+  let currentBeat = 0;
+
+  const setBeat = (n) => {
+    if (n === currentBeat) return;
+    currentBeat = n;
+    // Beat 4 keeps title 3 active (only the annotation appears)
+    const titleBeat = n >= 3 ? 3 : n;
+    titles.forEach(t => t.classList.toggle('is-active', t.dataset.beat === String(titleBeat)));
+    boxG.classList.toggle('is-on', n >= 2);
+    annotationG.classList.toggle('is-on', n >= 4);
+    animateViewBox(n >= 3 ? zoomViewBox : fullViewBox);
+  };
+
+  const animateViewBox = (target) => {
+    d3.select(svg)
+      .interrupt('vb')
+      .transition('vb')
+      .duration(1300)
+      .ease(d3.easeCubicInOut)
+      .tween('vb', () => {
+        const current = svg.getAttribute('viewBox').split(/\s+|,/).map(Number);
+        const interp = d3.interpolateArray(current, target);
+        return (t) => svg.setAttribute('viewBox', interp(t).join(' '));
+      });
+  };
+
+  // Determine beat from where the triggers are relative to a fixed anchor line
+  let ticking = false;
+  const checkBeats = () => {
+    ticking = false;
+    const anchor = window.innerHeight * 0.4; // 40% from top of viewport
+    let beat = 1;
+    triggers.forEach((el) => {
+      const top = el.getBoundingClientRect().top;
+      if (top < anchor) beat = Math.max(beat, +el.dataset.beat);
+    });
+    setBeat(beat);
+  };
+
+  const onScroll = () => {
+    if (!ticking) {
+      requestAnimationFrame(checkBeats);
+      ticking = true;
+    }
+  };
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  checkBeats();
+})();
+
+/* ── Roll-forward: typographic moment ────────────────────────────────────── */
+(function rollForward() {
+  const text = document.querySelector('.roll-forward__text');
+  const section = document.getElementById('rollForward');
+  if (!text || !section) return;
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      // Use a threshold-friendly approach: visible if the section is intersecting AND
+      // has scrolled at least somewhat into view (sticky pin engaged).
+      text.classList.toggle('is-visible', e.isIntersecting && e.intersectionRatio > 0.25);
+    });
+  }, { threshold: [0, 0.15, 0.3, 0.5, 0.75, 1] });
+  obs.observe(section);
+})();
+
+/* ── Delta-chart: four beats — rolling → smoothed → SPX → peaks/troughs ──── */
+(function deltaChart() {
+  const svg = document.getElementById('deltaChartSvg');
+  const section = document.getElementById('deltaChart');
+  if (!svg || !section) return;
+  const W = 1600, H = 600;
+  const cy = H * 0.5;
+  const ns = 'http://www.w3.org/2000/svg';
+
+  // Shared sine parameters (used by all derived lines)
+  const N = 600;
+  const macroAmp = 175;
+  const miniAmp  = 22;
+  const macroFreq = 3 * 2 * Math.PI / N;
+  const miniFreq  = 18 * 2 * Math.PI / N;
+  const toX = (i) => (i / (N - 1)) * (W - 80) + 40;
+
+  // Wind background (beat 4) — sits behind everything
+  const windG = document.createElementNS(ns, 'g');
+  windG.setAttribute('class', 'delta-wind');
+  const windYs = [70, 145, 215, 305, 395, 470, 540];
+  windYs.forEach((baseY, idx) => {
+    const wind = document.createElementNS(ns, 'path');
+    const yA = baseY + Math.sin(idx * 1.3) * 14;
+    const yB = baseY + Math.cos(idx * 1.7) * 22;
+    wind.setAttribute('d', `M-100 ${baseY} Q400 ${yA} 800 ${yB} T1700 ${baseY}`);
+    wind.setAttribute('stroke', 'rgba(230,225,215,0.10)');
+    wind.setAttribute('stroke-width', '1.5');
+    wind.setAttribute('fill', 'none');
+    wind.setAttribute('stroke-dasharray', '36 80');
+    windG.appendChild(wind);
+  });
+  svg.appendChild(windG);
+
+  // Horizontal zero baseline (red, solid — matches the label scene's baseline)
+  const zeroLine = document.createElementNS(ns, 'line');
+  zeroLine.setAttribute('x1', 0);
+  zeroLine.setAttribute('x2', W);
+  zeroLine.setAttribute('y1', cy);
+  zeroLine.setAttribute('y2', cy);
+  zeroLine.setAttribute('stroke', '#F85149');
+  zeroLine.setAttribute('stroke-width', '2');
+  zeroLine.setAttribute('opacity', '0.85');
+  svg.appendChild(zeroLine);
+
+  // Noisy line: macro + small riding ripples
+  const noisyPts = [];
+  for (let i = 0; i < N; i++) {
+    const macro = Math.sin(i * macroFreq);
+    const mini  = Math.sin(i * miniFreq + 0.7);
+    noisyPts.push([toX(i), cy - (macro * macroAmp + mini * miniAmp)]);
+  }
+  const noisyPath = d3.line().curve(d3.curveCatmullRom.alpha(0.5))(noisyPts);
+  const noisyLine = document.createElementNS(ns, 'path');
+  noisyLine.setAttribute('class', 'delta-noisy');
+  noisyLine.setAttribute('d', noisyPath);
+  noisyLine.setAttribute('stroke', '#E6E1D7');
+  noisyLine.setAttribute('stroke-width', '2');
+  noisyLine.setAttribute('stroke-linecap', 'round');
+  noisyLine.setAttribute('stroke-linejoin', 'round');
+  noisyLine.setAttribute('fill', 'none');
+  svg.appendChild(noisyLine);
+
+  // Smoothed line: macro sine only — perfectly traces the big waves, no ripples
+  const smoothedPts = [];
+  for (let i = 0; i < N; i++) {
+    const macro = Math.sin(i * macroFreq);
+    smoothedPts.push([toX(i), cy - macro * macroAmp]);
+  }
+  const smoothedPath = d3.line().curve(d3.curveCatmullRom.alpha(0.5))(smoothedPts);
+  const smoothedLine = document.createElementNS(ns, 'path');
+  smoothedLine.setAttribute('class', 'delta-smoothed');
+  smoothedLine.setAttribute('d', smoothedPath);
+  smoothedLine.setAttribute('stroke', '#F5C518');     // accent yellow, distinguishes from noisy
+  smoothedLine.setAttribute('stroke-width', '2.6');
+  smoothedLine.setAttribute('stroke-linecap', 'round');
+  smoothedLine.setAttribute('stroke-linejoin', 'round');
+  smoothedLine.setAttribute('fill', 'none');
+  svg.appendChild(smoothedLine);
+
+  // SPX line: tracks the smoothed cycle but not perfectly — slight phase lead,
+  // slightly smaller amplitude, gentle additional wobble. Reads as "correlated."
+  const spxPts = [];
+  for (let i = 0; i < N; i++) {
+    const macro  = Math.sin(i * macroFreq + 0.32);  // phase lead
+    const wobble = Math.sin(i * (macroFreq * 2.4) + 1.1) * 14;
+    spxPts.push([toX(i), cy - (macro * macroAmp * 0.86 + wobble)]);
+  }
+  const spxPath = d3.line().curve(d3.curveCatmullRom.alpha(0.5))(spxPts);
+  const spxLine = document.createElementNS(ns, 'path');
+  spxLine.setAttribute('class', 'delta-spx');
+  spxLine.setAttribute('d', spxPath);
+  spxLine.setAttribute('stroke', '#4ADE80');           // green for SPX
+  spxLine.setAttribute('stroke-width', '2.4');
+  spxLine.setAttribute('stroke-linecap', 'round');
+  spxLine.setAttribute('stroke-linejoin', 'round');
+  spxLine.setAttribute('fill', 'none');
+  svg.appendChild(spxLine);
+
+  // Peak/trough boxes (beat 4): tight rects around one macro peak and one trough.
+  // Macro peaks of sin(i * 3*2π/N) sit at i = N/12, N/12 + N/3, N/12 + 2N/3 → 50, 250, 450.
+  // Troughs at i = N/4, N/4 + N/3, N/4 + 2N/3 → 150, 350, 550.
+  // Pick a peak around i=250 and a trough around i=350 — central, both inside the view.
+  const extremesG = document.createElementNS(ns, 'g');
+  extremesG.setAttribute('class', 'delta-extremes');
+  const rcExtremes = rough.svg(svg, { options: { roughness: 1.8, bowing: 1.8 } });
+
+  const drawExtremeBox = (centerI, isPeak, primaryLabel) => {
+    const halfW = 28;
+    const xLo = toX(centerI - halfW);
+    const xHi = toX(centerI + halfW);
+    const peakY = cy - macroAmp;
+    const troughY = cy + macroAmp;
+    const yC = isPeak ? peakY : troughY;
+    const halfH = 30;
+    const yTop = yC - halfH;
+    const yBot = yC + halfH;
+
+    // Translucent red fill
+    const fill = document.createElementNS(ns, 'rect');
+    fill.setAttribute('x', xLo);
+    fill.setAttribute('y', yTop);
+    fill.setAttribute('width', xHi - xLo);
+    fill.setAttribute('height', yBot - yTop);
+    fill.setAttribute('fill', '#F85149');
+    fill.setAttribute('fill-opacity', '0.18');
+    extremesG.appendChild(fill);
+
+    // Sketched red outline
+    const box = rcExtremes.rectangle(xLo, yTop, xHi - xLo, yBot - yTop, {
+      stroke: '#F85149', strokeWidth: 1.8, roughness: 1.9, bowing: 2, seed: centerI, fill: 'none'
+    });
+    box.querySelectorAll('path').forEach(p => p.setAttribute('vector-effect', 'non-scaling-stroke'));
+    extremesG.appendChild(box);
+
+    // Two stacked labels (primary = HEADWIND/TAILWIND, secondary = FLAT SLOPE)
+    // CSS toggles which one is visible based on .delta-extremes.is-flat.
+    const labelY = isPeak ? yTop - 12 : yBot + 22;
+    const makeLabel = (text, cls) => {
+      const t = document.createElementNS(ns, 'text');
+      t.setAttribute('x', (xLo + xHi) / 2);
+      t.setAttribute('y', labelY);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('fill', '#F85149');
+      t.setAttribute('font-family', "'Inter', sans-serif");
+      t.setAttribute('font-weight', '700');
+      t.setAttribute('font-size', '15');
+      t.setAttribute('letter-spacing', '0.5');
+      t.setAttribute('class', cls);
+      t.textContent = text;
+      extremesG.appendChild(t);
+    };
+    makeLabel(primaryLabel, 'extreme-label extreme-label--primary');
+    makeLabel('FLAT SLOPE',  'extreme-label extreme-label--secondary');
+  };
+
+  drawExtremeBox(250, true,  'HEADWIND');
+  drawExtremeBox(350, false, 'TAILWIND');
+  svg.appendChild(extremesG);
+
+  // Noisy line draws itself once the section is meaningfully visible.
+  // Observe the sticky inner (100vh tall, so it can reach intersectionRatio = 1)
+  // rather than the whole 460vh section (which caps near 0.22).
+  const noisyLen = noisyLine.getTotalLength();
+  noisyLine.style.strokeDasharray = noisyLen;
+  noisyLine.style.strokeDashoffset = noisyLen;
+  let noisyRevealed = false;
+  const stickyEl = section.querySelector('.delta-chart__sticky');
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting && e.intersectionRatio > 0.5 && !noisyRevealed) {
+        noisyRevealed = true;
+        noisyLine.style.transition = 'stroke-dashoffset 2.6s ease-out, opacity 0.7s ease-out';
+        noisyLine.style.strokeDashoffset = '0';
+      }
+    });
+  }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
+  obs.observe(stickyEl);
+
+  // ── Beat dispatch via scroll-position threshold ──────────────────────────
+  const titles = document.querySelectorAll('.delta-chart__title');
+  const triggers = document.querySelectorAll('.delta-chart__trigger');
+  const legend = document.getElementById('deltaLegend');
+  let currentBeat = 0;
+  let smoothedRevealed = false;
+  let spxRevealed = false;
+
+  const revealStroke = (el, durationMs) => {
+    const len = el.getTotalLength();
+    el.style.strokeDasharray = len;
+    el.style.strokeDashoffset = len;
+    el.style.transition = `stroke-dashoffset ${durationMs}ms ease-out, opacity 0.6s ease-out`;
+    requestAnimationFrame(() => { el.style.strokeDashoffset = '0'; });
+  };
+
+  const setBeat = (n) => {
+    if (n === currentBeat) return;
+    currentBeat = n;
+    titles.forEach(t => t.classList.toggle('is-active', t.dataset.beat === String(n)));
+
+    // Line visibility per beat
+    noisyLine.classList.toggle('is-dimmed', n === 2);
+    noisyLine.classList.toggle('is-hidden', n >= 3);
+    smoothedLine.classList.toggle('is-on', n >= 2);
+    spxLine.classList.toggle('is-on', n === 3);
+    legend.classList.toggle('is-on', n === 3);
+    extremesG.classList.toggle('is-on', n >= 4);
+    extremesG.classList.toggle('is-flat', n >= 5);
+    windG.classList.toggle('is-on', n >= 4);
+
+    // First-reveal animations
+    if (n >= 2 && !smoothedRevealed) {
+      smoothedRevealed = true;
+      revealStroke(smoothedLine, 1900);
+    }
+    if (n === 3 && !spxRevealed) {
+      spxRevealed = true;
+      revealStroke(spxLine, 1900);
+    }
+  };
+
+  let ticking = false;
+  const checkBeats = () => {
+    ticking = false;
+    const anchor = window.innerHeight * 0.4;
+    let beat = 1;
+    triggers.forEach((el) => {
+      const top = el.getBoundingClientRect().top;
+      if (top < anchor) beat = Math.max(beat, +el.dataset.beat);
+    });
+    setBeat(beat);
+  };
+  const onScroll = () => {
+    if (!ticking) {
+      requestAnimationFrame(checkBeats);
+      ticking = true;
+    }
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  checkBeats();
+})();
+
+/* ── Slope chart: the derivative + zero-crossing marks ──────────────────── */
+(function slopeChart() {
+  const svg = document.getElementById('slopeChartSvg');
+  const section = document.getElementById('slopeChart');
+  if (!svg || !section) return;
+  const W = 1600, H = 600;
+  const cy = H * 0.5;
+  const ns = 'http://www.w3.org/2000/svg';
+
+  // Red zero baseline — same style as the other charts
+  const zeroLine = document.createElementNS(ns, 'line');
+  zeroLine.setAttribute('x1', 0);
+  zeroLine.setAttribute('x2', W);
+  zeroLine.setAttribute('y1', cy);
+  zeroLine.setAttribute('y2', cy);
+  zeroLine.setAttribute('stroke', '#F85149');
+  zeroLine.setAttribute('stroke-width', '2');
+  zeroLine.setAttribute('opacity', '0.85');
+  svg.appendChild(zeroLine);
+
+  // Slope of the smoothed cycle. The smoothed cycle was sin(i*macroFreq) * amp,
+  // so its derivative is cos(i*macroFreq) * amp * macroFreq. We scale amp directly.
+  const N = 600;
+  const macroFreq = 3 * 2 * Math.PI / N;
+  const slopeAmp = 160;
+  const toX = (i) => (i / (N - 1)) * (W - 80) + 40;
+
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    const slope = Math.cos(i * macroFreq);
+    pts.push([toX(i), cy - slope * slopeAmp]);
+  }
+  const linePath = d3.line().curve(d3.curveCatmullRom.alpha(0.5))(pts);
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', linePath);
+  path.setAttribute('stroke', '#A78BFA');         // purple — slope is its own object now
+  path.setAttribute('stroke-width', '2.6');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('fill', 'none');
+  svg.appendChild(path);
+
+  // Analytic zero crossings of cos(i * 6π/N): i = N/12 + k * N/6
+  // For N=600 → i = 50, 150, 250, 350, 450, 550
+  // Even k → cos derivative is negative (line crossing DOWN through zero) → peak of original cycle
+  // Odd k  → cos derivative is positive (line crossing UP through zero)   → trough of original cycle
+  const crossings = [];
+  for (let k = 0; k < 6; k++) {
+    crossings.push({ ix: N / 12 + k * N / 6, isPeak: (k % 2 === 0) });
+  }
+
+  // Dots group — circles start at r=0 and pop in after the line draws
+  const dotsG = document.createElementNS(ns, 'g');
+  dotsG.setAttribute('class', 'slope-dots');
+
+  const dotEls = crossings.map(({ ix, isPeak }) => {
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', toX(ix));
+    c.setAttribute('cy', cy);
+    c.setAttribute('r', 0);
+    c.setAttribute('class', isPeak ? 'slope-dot slope-dot--peak' : 'slope-dot slope-dot--trough');
+    c.setAttribute('fill', '#FFFFFF');
+    c.setAttribute('stroke', 'rgba(255,255,255,0.45)');
+    c.setAttribute('stroke-width', '6');
+    dotsG.appendChild(c);
+
+    // Label — hidden until beat 2. Above the dot for peaks, below for troughs.
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', toX(ix));
+    label.setAttribute('y', isPeak ? cy - 26 : cy + 38);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('fill', isPeak ? '#F85149' : '#3FB950');
+    label.setAttribute('font-family', "'Inter', sans-serif");
+    label.setAttribute('font-weight', '700');
+    label.setAttribute('font-size', '13');
+    label.setAttribute('letter-spacing', '1');
+    label.setAttribute('class', 'slope-label');
+    label.textContent = isPeak ? 'LIQUIDITY PEAK' : 'LIQUIDITY TROUGH';
+    dotsG.appendChild(label);
+
+    return c;
+  });
+  svg.appendChild(dotsG);
+
+  // Line draws via stroke-dasharray, then dots pop in with staggered delay.
+  const len = path.getTotalLength();
+  path.style.strokeDasharray = len;
+  path.style.strokeDashoffset = len;
+
+  let revealed = false;
+  const stickyEl = section.querySelector('.slope-chart__sticky');
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting && e.intersectionRatio > 0.5 && !revealed) {
+        revealed = true;
+        path.style.transition = 'stroke-dashoffset 2.4s ease-out';
+        path.style.strokeDashoffset = '0';
+        dotEls.forEach((c, i) => {
+          gsap.to(c, {
+            attr: { r: 11 },
+            duration: 0.55,
+            ease: 'back.out(2.2)',
+            delay: 1.7 + i * 0.10
+          });
+        });
+      }
+    });
+  }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
+  obs.observe(stickyEl);
+
+  // ── Beat dispatch: title swap + dot color/label reveal ───────────────────
+  const titles = document.querySelectorAll('.slope-chart__title');
+  const triggers = document.querySelectorAll('.slope-chart__trigger');
+  let currentBeat = 0;
+
+  const setBeat = (n) => {
+    if (n === currentBeat) return;
+    currentBeat = n;
+    titles.forEach(t => t.classList.toggle('is-active', t.dataset.beat === String(n)));
+    dotsG.classList.toggle('is-colored', n >= 2);
+  };
+
+  let ticking = false;
+  const checkBeats = () => {
+    ticking = false;
+    const anchor = window.innerHeight * 0.4;
+    let beat = 1;
+    triggers.forEach((el) => {
+      const top = el.getBoundingClientRect().top;
+      if (top < anchor) beat = Math.max(beat, +el.dataset.beat);
+    });
+    setBeat(beat);
+  };
+  const onScroll = () => {
+    if (!ticking) {
+      requestAnimationFrame(checkBeats);
+      ticking = true;
+    }
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  checkBeats();
+})();
+
+/* ── TBL Pulse CTA + closing note entrance reveals ──────────────────────── */
+(function closingScenes() {
+  const reveal = (el) => {
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        el.classList.toggle('is-visible',
+          e.isIntersecting && e.intersectionRatio > 0.25);
+      });
+    }, { threshold: [0, 0.15, 0.25, 0.5, 0.75, 1] });
+    obs.observe(el);
+  };
+  reveal(document.getElementById('pulseCta'));
+  reveal(document.getElementById('closingNote'));
+})();
+
+</script>
+</body>
+</html>
