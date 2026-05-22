@@ -935,6 +935,41 @@ asked for it to replace the typographic TBL PULSE in the semifinal scene.
 
 ---
 
+## Round 32 — Pushed to GitHub + enabled GitHub Pages on the stable build
+
+**Change:**
+
+- `git init` in `indicator_story/`, default branch `main`.
+- Added remote `origin` → `https://github.com/AugustineCarB/indicator-story.git`
+  (public repo, was empty before this push).
+- Created `docs/` folder containing the served artifact:
+  - `docs/index.html` — copy of `index.stable.html` (NOT the experimental
+    `index.html`)
+  - `docs/assets/TBL_Pulse_Logo.png` + `docs/assets/tbl_logo_white.png`
+    so the relative `assets/…` paths in the served HTML resolve.
+- Added `.gitignore` (skips `.DS_Store`, `node_modules/`, `.vscode/`,
+  `.idea/`, `*.log`) and `README.md` (explains the file layout, local dev
+  command, and the "promote experimental to stable" workflow).
+- Initial commit, pushed to `origin/main`.
+- Enabled GitHub Pages via `gh api -X POST /repos/.../pages` with
+  `source[branch]=main` and `source[path]=/docs`. Pages serves the stable
+  build from `docs/` while the experimental `index.html` stays untouched
+  at repo root for ongoing iteration.
+
+**Public URL:** https://augustinecarb.github.io/indicator-story/
+
+**Why:** User wanted a public-facing hosted version of the page to share
+with others, but explicitly asked that the *stable* index drive the public
+site (not the experimental copy with the new smoothness fixes).
+
+**Files:**
+- New: `.gitignore`, `README.md`, `docs/index.html`, `docs/assets/*`
+- Existing files unchanged (local `index.html` still serves as the
+  experimental copy; `index.stable.html` remains the source of truth).
+- GitHub Pages config: source = `main` branch, path = `/docs`.
+
+---
+
 ## How to add new entries
 
 Each round gets a section with this shape:
