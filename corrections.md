@@ -970,6 +970,83 @@ site (not the experimental copy with the new smoothness fixes).
 
 ---
 
+## Round 33 — index.stable2.html: full smoothness + state-machine pass (Fable 5)
+
+**Change:** Created `index.stable2.html` as a copy of `index.html` and applied
+a complete smoothness/bug-fix pass to the copy. `index.html` and
+`index.stable.html` are untouched; the deployed site is unaffected.
+
+1. **Intro dive is lerped.** Wheel/touch/keys now move a *target* progress and
+   a rAF loop eases the rendered progress toward it (factor 0.13, sleeps when
+   settled). Chunky mouse-wheel notches and trackpad bursts produce the same
+   glide; mid-dive reversals ease instead of snapping. After the dive
+   completes, a 450ms cooldown swallows the same gesture's leftover momentum
+   so the page no longer lurches straight into the label scene. Re-engaging at
+   the top re-enters at full expansion and eases back out. The `.intro` fade
+   transition moved to the base class so re-engage fades in instead of popping.
+2. **Label-scene zoom-state bug fixed.** The exit observer used to snap the
+   viewBox to full behind the state machine's back; scrolling back up into
+   beat 3/4 then hit setBeat's `n === currentBeat` early-return and the zoom
+   never re-applied (title + annotation showed, zoom missing). The exit
+   handler now interrupts the in-flight d3 tween and resets `currentBeat = 0`
+   so any re-entry fully re-applies its beat.
+3. **Final-beat dwell fixed.** The last trigger in the label scene (320vh of
+   380vh) and delta chart (450vh of 510vh) fired at *exactly* the scroll
+   position where the sticky pane releases, so the annotation beat and the
+   FLAT SLOPE crossfade were never seen while pinned. Section heights raised:
+   label 380→440vh, delta 510→570vh, slope 200→260vh (mobile: 310→380,
+   430→500, 180→230; pulse-cta 110→150vh and closing-note 110→140vh on
+   mobile, which previously pinned for only 10vh). Every final beat now gets
+   ≥50vh of pinned dwell.
+4. **Stroke reveals are deterministic.** Shared `drawStroke`/`settleStroke`
+   helpers commit the dasharray start state with a forced reflow before
+   setting the end state (the old single-rAF pattern could coalesce both
+   writes into one style recalc and skip the draw animation entirely).
+5. **Slope chart hardened.** Dots force-complete (`gsap.killTweensOf` + snap
+   to full radius) if the reader reaches beat 2 while the pop-in stagger is
+   still pending, and the reveal skips the stagger when the reader arrives
+   already past beat 1. The "Slope of Cycle" legend now fades in as the line
+   draw approaches the right edge (it was always-on before; scenes.md said it
+   appears).
+6. **30-day box is 30 points.** Zoom window widened from 20 points (310–330)
+   to 30 (305–335), same ascending segment, same center. The copy says
+   "30-day period"; the box now spans exactly 30 daily points. (Note: this
+   repo's CLAUDE.md said 335–365 while the shipped code was 310–330 — the
+   doc had drifted; both now corrected.)
+7. **Mobile canvas.** Phones (≤820px) draw on a 1600×1000 viewBox with all
+   vertical geometry scaled by KY = 1000/600; the chart band at 390px is
+   ~67% taller instead of a thin letterboxed strip. SVG text scales up
+   (annotation 8→22, extreme labels 15→38, slope labels 13→40 user units),
+   and only the central LIQUIDITY PEAK/TROUGH pair keeps labels on phones
+   (six labeled dots cannot fit side by side; all six dots still color).
+   Desktop output is pixel-identical (KY = 1).
+8. **Platform.** Sticky panes use `100svh` with a `100vh` fallback (iOS
+   URL-bar); full-bleed SVGs use `100%` instead of `100vw` (scrollbar-width
+   overflow); `prefers-reduced-motion` honored (instant lerp, settled strokes,
+   no cue bob, wind paused, instant viewBox); scrollama + flubber script tags
+   removed (loaded but never called — beat dispatch is hand-rolled and
+   nothing morphs); OG meta tags, theme-color, and an inline SVG favicon
+   added; `history.scrollRestoration = 'manual'`; dead `intro:done` event
+   removed; `window.__tblStory.skipIntro()` added as a deterministic hook for
+   automated tests.
+
+**Why:** User asked for a "perfected" copy of the page — smoother, every scene
+displaying as intended, bugs fixed — without touching the existing files.
+
+**Verification:** Headless system-Chrome (playwright-core) tours at 1440×900
+and 390×844 plus a `prefers-reduced-motion` pass: screenshot + DOM-state dump
+at all 16 beats, plus stress regressions (re-entry into the label zoom,
+instant blast to slope beat 2, back-scroll into delta beat 3, intro re-engage
+→ shrink → re-dive). All states matched scenes.md; zero page errors.
+
+**Files:**
+- New: `index.stable2.html` (the only page file touched).
+- Docs: `scenes.md` (30-point box wording, mobile label note), `CLAUDE.md`
+  (stack, file layout, zoom window, decisions log, TODOs), `README.md`
+  (file table + promotion note), this file.
+
+---
+
 ## How to add new entries
 
 Each round gets a section with this shape:

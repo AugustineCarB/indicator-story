@@ -40,9 +40,9 @@ baseline runs low across the chart.
 **→ Scroll →**
 
 **Zoom into a 30-day period.** Same chart, same baseline. Title cross-fades
-to *"Zoom into a 30-day period"*. A small red box (20 data points wide, on
-an ascending segment near the middle of the chart) fades in over the line
-with translucent red fill + sketched outline.
+to *"Zoom into a 30-day period"*. A small red box (30 data points wide — one
+point per day of the period — on an ascending segment near the middle of the
+chart) fades in over the line with translucent red fill + sketched outline.
 
 **→ Scroll →**
 
@@ -144,7 +144,9 @@ six white dots change color in place: every dot where the purple line is
 crossing downward through the baseline turns red, every dot where the line
 is crossing upward turns green. Each red dot picks up a small label above
 it that reads *"LIQUIDITY PEAK,"* and each green dot picks up a label
-below it that reads *"LIQUIDITY TROUGH."*
+below it that reads *"LIQUIDITY TROUGH."* On a phone, all six dots still
+change color but only the central peak and trough carry labels — six
+labeled dots cannot fit a phone-width screen.
 
 **→ Scroll →**
 

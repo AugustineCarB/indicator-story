@@ -27,13 +27,30 @@ asks to wire up live Supabase data, push back: keep this page illustrative.
 
 ```
 indicator_story/
-├── index.html              ← single file: HTML + inline CSS + inline JS
+├── index.html              ← experimental working copy: HTML + inline CSS + inline JS
+├── index.stable.html       ← known-good build; mirrored to docs/index.html (deployed)
+├── index.stable2.html      ← Fable 5 smoothness/bug-fix pass (Round 33); promotion candidate
+├── docs/                   ← what GitHub Pages serves (copy of index.stable.html + assets)
+├── assets/                 ← TBL logo + TBL Pulse logo for the local copies
 ├── CLAUDE.md               ← this file
+├── scenes.md               ← reader-facing beat-by-beat spec
+├── corrections.md          ← chronological change log
 ├── storyline_idea/         ← user's hand-drawn 9-frame storyboard (HEIC)
 └── artwork_inspiration/    ← Dalio cycle-sketch reference (PNG)
 ```
 
-Everything is in `index.html`. No build step, no npm, no bundler. Edit and refresh.
+Each page file is single-file and self-contained. No build step, no npm, no
+bundler. Edit and refresh.
+
+**Embedded copy in TBL Pulse (keep in sync).** On 2026-06-12 `index.stable2.html`
+was copied byte-for-byte into the dashboard repo at
+`TBL-Pulse/public/indicator-story/index.html` (+ `assets/`) and shipped to
+`main` — it opens full-screen from the "How the Indicator is Built" button in
+the TBL Liquidity tab (`src/components/liquidity/IndicatorStoryModal.tsx`).
+It stays illustrative/synthetic there too — **never** wire the Pulse copy to
+live signals. The two copies do **not** auto-sync: if you change the story
+here, re-copy it into `TBL-Pulse/public/indicator-story/index.html` (same
+pattern as `TBL-Pulse/public/books/*.html`).
 
 ## Document conventions — keep these three in sync
 
@@ -88,11 +105,11 @@ tooling assumptions needed; this is plain HTML.
 
 | Library | Version | Role |
 |---|---|---|
-| Scrollama | 3.2.0 | Scene triggers via IntersectionObserver |
-| D3 | 7 | Scales, line generators, path interpolation, axes |
-| flubber | 0.4.2 | Path-to-path morphing for chart-state transitions |
+| D3 | 7 | Scales, line generators, viewBox tween, axes |
 | rough.js | 4.6.6 | Hand-sketched outlines on annotations and the zoom box |
-| GSAP | 3.12.5 | Numeric tweens for stroke-dasharray reveals + dot pop-in |
+| GSAP | 3.12.5 | Dot pop-in tweens on the slope chart |
+| Scrollama | 3.2.0 | **Removed in `index.stable2.html`** (loaded but never called — beat dispatch is a hand-rolled rAF scroll listener). Still loaded by `index.html` / `index.stable.html` |
+| flubber | 0.4.2 | **Removed in `index.stable2.html`** (nothing morphs paths). Still loaded by `index.html` / `index.stable.html` |
 
 No React, no Svelte, no Three.js, no Lenis. Native scroll is correct for data stories.
 
@@ -125,11 +142,29 @@ deliberate user choice — not yellow (the original plan had it yellow).
 
 ### Motion
 
-- Chart morphs: `d3.easeCubicInOut`, 800–1200ms.
-- Stroke-dasharray line reveals: 1.6–2.4s, `power2.out`.
+- Chart morphs: `d3.easeCubicInOut`, 800–1300ms.
+- Stroke-dasharray line reveals: 1.6–2.6s, ease-out.
 - Intro line draw: 2.6s, `cubic-bezier(.22,.61,.36,1)`.
+- Intro dive (stable2): inputs move a *target* progress; a rAF loop lerps the
+  rendered progress toward it (factor 0.13, sleeps when settled). 450ms wheel
+  cooldown after the dive completes so trackpad momentum doesn't lurch into
+  the next scene. `prefers-reduced-motion` collapses the lerp and settles all
+  stroke reveals instantly.
 - "The Boat" pacing rule: leave breathing room between beats. Slow and editorial,
-  not snappy.
+  not snappy. Every sticky section's FINAL beat must fire with ≥50vh of pinned
+  scroll left before the section releases (Round 33 fixed several that fired
+  exactly at the release point).
+
+### Chart canvas (stable2)
+
+- Desktop draws every scene on the original 1600×600 (8:3) viewBox.
+- Phones (≤820px at load) use a taller 1600×1000 viewBox; all vertical
+  geometry (amplitudes, baselines, label offsets, dot radii) scales by
+  `KY = CHART_H / 600`. At 390px wide the chart band is ~67% taller than the
+  8:3 letterbox. Desktop output is pixel-identical (`KY = 1`).
+- On phones, SVG text sizes are bumped (annotation 8→22, extreme labels
+  15→38, slope labels 13→40 user units) and only the central LIQUIDITY
+  PEAK/TROUGH pair keeps labels (`.slope-label--aux` hides the rest).
 
 ## Aesthetic inspirations
 
@@ -166,9 +201,14 @@ sees, beat by beat.
   T=320, mid T=110 phased, fast T=38) + linear drift + small noise.
 - Derived series: `delta30`, `smoothed` (double EMA approximating HP filter),
   `spxDelta`, `slope`.
-- 30-day zoom window: **data points 335–365**, centered on a clean central peak
-  where slow + mid cycles align (i≈345). This is the position the user
-  approved after iteration. Don't move it without asking.
+- 30-day zoom window: in `index.stable2.html` the box spans **data points
+  305–335** — exactly 30 points, one per day of the copy's "30-day period" —
+  on the ascending segment near the middle of the chart (center i≈320). The
+  older files still carry the 20-point 310–330 box on the same segment. (An
+  earlier revision of this doc said 335–365 while the shipped code was
+  310–330; the doc had drifted. scenes.md + code are the truth.) The segment
+  is the position the user approved after iteration. Don't move it without
+  asking.
 - `data.zoomYMin` / `data.zoomYMax` are precomputed from the slice — used to
   draw the zoom box tightly around the line with `PAD=3.2` data-unit padding.
 
@@ -186,6 +226,14 @@ sees, beat by beat.
 | 2026-05-21 | **30-day window = 30 data points** (was 100) | The story is about 30 days; the box should actually be 30 days. |
 | 2026-05-21 | **Box centered on data points 335–365** (central peak) | User pointed with an arrow to the central peak after seeing it on the right. |
 | 2026-05-21 | **Label scene added** between dive and zoom-in | User wanted readers to know what the line is before zooming. |
+| 2026-06-12 | **`index.stable2.html` created** (Fable 5 pass, Round 33); `index.html` + `index.stable.html` untouched | User asked for a perfected copy alongside the originals. |
+| 2026-06-12 | Intro progress **lerped** via rAF + 450ms post-dive wheel cooldown | Mouse-wheel notches stepped 0.12/notch; trackpad momentum lurched into scene 2. |
+| 2026-06-12 | **Section heights raised** so every final beat keeps ≥50vh pinned dwell | Label/delta last triggers fired exactly at sticky release; beat was never seen pinned. |
+| 2026-06-12 | Label-scene exit **resets the beat** so re-entry re-applies the zoom | Back-scroll into beats 3/4 lost the zoom (early-return swallowed it). |
+| 2026-06-12 | **Zoom box widened to 30 points (305–335)**, same segment | Copy says 30 days; the box was 20 points. |
+| 2026-06-12 | **Scrollama + flubber dropped** from stable2 | Loaded but never called. |
+| 2026-06-12 | **Mobile: 1600×1000 canvas** (KY-scaled geometry), bigger SVG text, central label pair only | 8:3 canvas rendered a ~146px letterboxed band at 390px; SVG labels were ~3px. |
+| 2026-06-12 | `100svh` sticky heights, reduced-motion support, OG meta, inline favicon | iOS URL-bar jump; accessibility; link sharing previews. |
 
 ## Brand voice (inherited from root CLAUDE.md)
 
@@ -206,8 +254,13 @@ sees, beat by beat.
 - [ ] Decide whether the final CTA goes to `thebitcoinlayer.substack.com` or a
   custom landing.
 - [ ] Decide whether to add an audio cue à la "The Boat" (currently silent).
-- [ ] Mobile QA at 375px — the sticky pattern is dropped via media query but
-  hasn't been tested on a real phone.
+- [ ] Decide whether to promote `index.stable2.html` → `index.stable.html` +
+  `docs/index.html` (the Round 33 pass; verified headless, not yet
+  human-reviewed in a real browser).
+- [x] Mobile QA at 390×844 — done headless for `index.stable2.html`
+  (2026-06-12): taller mobile canvas, legible labels, CTA dwell fixed. Note
+  the sticky pattern was never actually dropped on mobile (old doc drift).
+  Real-device pass still worth doing before promotion.
 - [ ] Possibly: a "dark-mode toggle" or a cream-paper variant (the original
   plan had cream as an alternative palette).
 
